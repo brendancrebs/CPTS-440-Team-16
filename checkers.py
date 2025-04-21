@@ -1,157 +1,199 @@
-import sys
+from __future__ import annotations
 import copy
+from typing import Dict, List, Tuple, Union
 
-EMPTY, PLAYER1, PLAYER2, KING1, KING2 = '.', 'x', 'o', 'X', 'O'
+try:
+    import pygame # type: ignore
+except ImportError:
+    pygame = None
 
-def create_board():
-    board = [[EMPTY]*8 for _ in range(8)]
-    for row in range(3):
-        for col in range((row+1)%2, 8, 2):
-            board[row][col] = PLAYER2
-    for row in range(5,8):
-        for col in range((row+1)%2, 8, 2):
-            board[row][col] = PLAYER1
-    return board
+ROWS = COLS = 8
+SQUARE_SIZE = 100
 
-def print_board(board):
-    print("  0 1 2 3 4 5 6 7")
-    for idx, row in enumerate(board):
-        print(idx, ' '.join(row))
-    print()
+RED: Tuple[int, int, int]   = (255, 0,   0)
+WHITE: Tuple[int, int, int] = (255, 255, 255)
 
-def opponent(player):
-    return [PLAYER2, KING2] if player in [PLAYER1, KING1] else [PLAYER1, KING1]
+HUMAN  = RED
+AI_WHITE = WHITE
+GOLD = (255, 215, 0)
+GREY = (128, 128, 128)
+LIGHT = (238, 238, 210)
+DARK = (118, 150, 86)
 
-def is_king(piece):
-    return piece in [KING1, KING2]
 
-def valid_moves(board, player):
-    moves = []
-    directions = [(-1,-1), (-1,1)] if player in [PLAYER1] else [(1,-1), (1,1)]
-    if is_king(player):
-        directions += [(-d[0], -d[1]) for d in directions]
+class Piece:
+    PADDING = 15
+    OUTLINE = 2
 
-    for r in range(8):
-        for c in range(8):
-            if board[r][c].lower() == player.lower():
-                for dr, dc in directions:
-                    nr, nc = r+dr, c+dc
-                    if 0 <= nr < 8 and 0 <= nc < 8 and board[nr][nc] == EMPTY:
-                        moves.append(((r,c),(nr,nc)))
-                    elif 0 <= nr+dr < 8 and 0 <= nc+dc < 8:
-                        if board[nr][nc] in opponent(player) and board[nr+dr][nc+dc] == EMPTY:
-                            moves.append(((r,c),(nr+dr,nc+dc)))
-    return moves
+    def __init__(self, row: int, col: int, color: Tuple[int, int, int]):
+        self.row = row
+        self.col = col
+        self.color = color
+        self.king = False
 
-def move_piece(board, move):
-    (r1,c1),(r2,c2) = move
-    piece = board[r1][c1]
-    board[r1][c1] = EMPTY
-    board[r2][c2] = piece
-    if abs(r2-r1) == 2:
-        board[(r1+r2)//2][(c1+c2)//2] = EMPTY
-    if piece == PLAYER1 and r2 == 0:
-        board[r2][c2] = KING1
-    if piece == PLAYER2 and r2 == 7:
-        board[r2][c2] = KING2
+    def make_king(self):
+        self.king = True
 
-def has_won(board, player):
-    opponent_pieces = opponent(player)
-    for row in board:
-        for cell in row:
-            if cell in opponent_pieces:
-                return False
-    return True
+    def move(self, row: int, col: int):
+        self.row, self.col = row, col
 
-def heuristic(board, player):
-    opponent_pieces = opponent(player)
-    player_score = opponent_score = 0
-    for row in board:
-        for cell in row:
-            if cell.lower() == player.lower():
-                player_score += 3 if is_king(cell) else 1
-            elif cell.lower() in [p.lower() for p in opponent_pieces]:
-                opponent_score += 3 if is_king(cell) else 1
-    return player_score - opponent_score
+    def draw(self, win):  # type: ignore[no-self]
+        if pygame is None:
+            raise RuntimeError("pygame not available; cannot draw")
+        radius = SQUARE_SIZE // 2 - self.PADDING
+        x = self.col * SQUARE_SIZE + SQUARE_SIZE // 2
+        y = self.row * SQUARE_SIZE + SQUARE_SIZE // 2
+        pygame.draw.circle(win, GREY, (x, y), radius + self.OUTLINE)
+        pygame.draw.circle(win, self.color, (x, y), radius)
+        if self.king:
+            pygame.draw.circle(win, GOLD, (x, y), radius - 4, width=3)
 
-def minimax(board, depth, alpha, beta, maximizing_player, player):
-    if depth == 0 or has_won(board, player) or has_won(board, opponent(player)[0]):
-        return heuristic(board, player), None
+    def __repr__(self):
+        c = "W" if self.color == WHITE else "R"
+        return f"{c}{'K' if self.king else ''}({self.row},{self.col})"
 
-    moves = valid_moves(board, player if maximizing_player else opponent(player)[0])
-    if not moves:
-        return heuristic(board, player), None
 
-    best_move = None
-    if maximizing_player:
-        max_eval = float('-inf')
-        for move in moves:
-            new_board = copy.deepcopy(board)
-            move_piece(new_board, move)
-            eval, _ = minimax(new_board, depth-1, alpha, beta, False, player)
-            if eval > max_eval:
-                max_eval = eval
-                best_move = move
-            alpha = max(alpha, eval)
-            if beta <= alpha:
-                break
-        return max_eval, best_move
-    else:
-        min_eval = float('inf')
-        for move in moves:
-            new_board = copy.deepcopy(board)
-            move_piece(new_board, move)
-            eval, _ = minimax(new_board, depth-1, alpha, beta, True, player)
-            if eval < min_eval:
-                min_eval = eval
-                best_move = move
-            beta = min(beta, eval)
-            if beta <= alpha:
-                break
-        return min_eval, best_move
+class Board:
+    def __init__(self):
+        self.board: List[List[Union[Piece, int]]] = []
+        self.red_left = self.white_left = 12
+        self.red_kings = self.white_kings = 0
+        self._init_board()
 
-def main():
-    board = create_board()
-    human_player = PLAYER1
-    ai_player = PLAYER2
-    current_player = PLAYER1
+    def _init_board(self):
+        self.board.clear()
+        for row in range(ROWS):
+            self.board.append([])
+            for col in range(COLS):
+                if (row + col) % 2 == 1:
+                    if row < 3:
+                        self.board[row].append(Piece(row, col, RED))
+                    elif row > 4:
+                        self.board[row].append(Piece(row, col, WHITE))
+                    else:
+                        self.board[row].append(0)
+                else:
+                    self.board[row].append(0)
 
-    while True:
-        print_board(board)
-        moves = valid_moves(board, current_player)
-        if not moves:
-            winner = opponent(current_player)[0]
-            print(f"Player {winner} wins!")
-            break
+    def copy(self) -> "Board":
+        return copy.deepcopy(self)
 
-        if current_player == human_player:
-            print(f"Your turn ({human_player}). Available moves:")
-            for idx, move in enumerate(moves):
-                print(f"{idx}: {move[0]} -> {move[1]}")
-            try:
-                choice = int(input("Select move number: "))
-                if choice < 0 or choice >= len(moves):
-                    raise ValueError
-            except ValueError:
-                print("Invalid input, try again.")
-                continue
-            move_piece(board, moves[choice])
-        else:
-            print("AI is thinking...")
-            _, ai_move = minimax(board, 4, float('-inf'), float('inf'), True, ai_player)
-            if ai_move:
-                print(f"AI moves: {ai_move[0]} -> {ai_move[1]}")
-                move_piece(board, ai_move)
+    def get_piece(self, row: int, col: int) -> Union[Piece, int]:
+        return self.board[row][col]
+
+    def get_all_pieces(self, color: Tuple[int, int, int]) -> List[Piece]:
+        return [p for row in self.board for p in row if p != 0 and p.color == color]
+
+    def move(self, piece: Piece, row: int, col: int):
+        self.board[piece.row][piece.col], self.board[row][col] = 0, piece
+        piece.move(row, col)
+        if (row == ROWS - 1 and piece.color == RED) or (row == 0 and piece.color == WHITE):
+            if not piece.king:
+                piece.make_king()
+                if piece.color == RED:
+                    self.red_kings += 1
+                else:
+                    self.white_kings += 1
+
+    def remove(self, pieces: List[Piece]):
+        for p in pieces:
+            self.board[p.row][p.col] = 0
+            if p.color == RED:
+                self.red_left -= 1
             else:
-                print("AI has no moves left!")
+                self.white_left -= 1
+
+    def winner(self) -> Union[str, None]:
+        if self.red_left <= 0:
+            return "White"
+        if self.white_left <= 0:
+            return "Red"
+        return None
+
+    def evaluate(self) -> float:
+        # simple starting heuristic. Kings worth 1.5
+        return (
+            (self.white_left + 0.5 * self.white_kings)
+            - (self.red_left + 0.5 * self.red_kings)
+        )
+
+    def get_valid_moves(self, piece: Piece) -> Dict[Tuple[int, int], List[Piece]]:
+        moves: Dict[Tuple[int, int], List[Piece]] = {}
+        left, right = piece.col - 1, piece.col + 1
+        row = piece.row
+        if piece.color == RED or piece.king:
+            moves.update(self._traverse_left(row + 1, ROWS, 1, piece.color, left))
+            moves.update(self._traverse_right(row + 1, ROWS, 1, piece.color, right))
+        if piece.color == WHITE or piece.king:
+            moves.update(self._traverse_left(row - 1, -1, -1, piece.color, left))
+            moves.update(self._traverse_right(row - 1, -1, -1, piece.color, right))
+        return moves
+
+    def _traverse_left(self, start, stop, step, color, left, skipped=None):
+        if skipped is None:
+            skipped = []
+        moves, last = {}, []
+        for r in range(start, stop, step):
+            if left < 0:
                 break
+            current = self.board[r][left]
+            if current == 0:
+                if skipped and not last:
+                    break
+                moves[(r, left)] = skipped + last
+                if last:
+                    moves.update(
+                        self._traverse_left(r + step, stop, step, color, left - 1, skipped + last)
+                    )
+                    moves.update(
+                        self._traverse_right(r + step, stop, step, color, left + 1, skipped + last)
+                    )
+                break
+            elif current.color == color:
+                break
+            else:
+                last = [current]
+            left -= 1
+        return moves
 
-        if has_won(board, current_player):
-            print_board(board)
-            print(f"Player {current_player} wins!")
-            break
+    def _traverse_right(self, start, stop, step, color, right, skipped=None):
+        if skipped is None:
+            skipped = []
+        moves, last = {}, []
+        for r in range(start, stop, step):
+            if right >= COLS:
+                break
+            current = self.board[r][right]
+            if current == 0:
+                if skipped and not last:
+                    break
+                moves[(r, right)] = skipped + last
+                if last:
+                    moves.update(
+                        self._traverse_left(r + step, stop, step, color, right - 1, skipped + last)
+                    )
+                    moves.update(
+                        self._traverse_right(r + step, stop, step, color, right + 1, skipped + last)
+                    )
+                break
+            elif current.color == color:
+                break
+            else:
+                last = [current]
+            right += 1
+        return moves
 
-        current_player = opponent(current_player)[0]
-
-if __name__ == "__main__":
-    main()
+    def draw(self, win):  # type: ignore[no-self]
+        if pygame is None:
+            raise RuntimeError("pygame not available; cannot draw")
+        for row in range(ROWS):
+            for col in range(COLS):
+                color = LIGHT if (row + col) % 2 == 0 else DARK
+                pygame.draw.rect(
+                    win, color, (col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
+                )
+        for row in range(ROWS):
+            for col in range(COLS):
+                piece = self.board[row][col]
+                if piece != 0:
+                    piece.draw(win)

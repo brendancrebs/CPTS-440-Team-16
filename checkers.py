@@ -20,7 +20,6 @@ GREY = (128, 128, 128)
 LIGHT = (238, 238, 210)
 DARK = (118, 150, 86)
 
-
 class Piece:
     PADDING = 15
     OUTLINE = 2
@@ -104,18 +103,27 @@ class Board:
                 self.white_left -= 1
 
     def winner(self) -> Union[str, None]:
+        # Check if a player has no pieces left
         if self.red_left <= 0:
             return "White"
         if self.white_left <= 0:
             return "Red"
+
+        # Check if a player has no legal moves left
+        if not self.has_legal_moves(RED):
+            return "White"
+        if not self.has_legal_moves(WHITE):
+            return "Red"
+
         return None
 
-    def evaluate(self) -> float:
-        # simple starting heuristic. Kings worth 1.5
-        return (
-            (self.white_left + 0.5 * self.white_kings)
-            - (self.red_left + 0.5 * self.red_kings)
-        )
+    def has_legal_moves(self, color: Tuple[int, int, int]) -> bool:
+        """Check if the given color has any legal moves available."""
+        pieces = self.get_all_pieces(color)
+        for piece in pieces:
+            if self.get_valid_moves(piece):  # If any piece has valid moves
+                return True
+        return False
 
     def get_valid_moves(self, piece: Piece) -> Dict[Tuple[int, int], List[Piece]]:
         moves: Dict[Tuple[int, int], List[Piece]] = {}
@@ -151,7 +159,10 @@ class Board:
                 break
             elif current.color == color:
                 break
-            else:
+            else:  # opponent's piece
+                # Check if we already found an opponent's piece without an empty space
+                if last:
+                    break  # Can't jump over two pieces consecutively
                 last = [current]
             left -= 1
         return moves
@@ -178,7 +189,10 @@ class Board:
                 break
             elif current.color == color:
                 break
-            else:
+            else:  # opponent's piece
+                # Check if we already found an opponent's piece without an empty space
+                if last:
+                    break  # Can't jump over two pieces consecutively
                 last = [current]
             right += 1
         return moves

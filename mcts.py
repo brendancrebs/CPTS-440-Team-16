@@ -66,7 +66,6 @@ def backpropagate(path: List[Node], value: float):
 
 
 def best_move(board: Board, color, simulations: int = 800) -> Board:
-    """Return a *new* Board after *color* plays, using given simulations."""
     root = Node(board, color)
     expand(root)
 

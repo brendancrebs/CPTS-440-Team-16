@@ -24,7 +24,7 @@ def rate(rating_a: float, rating_b: float, score_a: float) -> Tuple[float, float
     rb_new = rating_b + K_FACTOR * ((1 - score_a) - expected(rating_b, rating_a))
     return ra_new, rb_new
 
-MAX_PLIES = 160  # 80 moves
+MAX_PLIES = 160
 
 def play_game(move_fn_a: Callable, move_fn_b: Callable, *, swap_colors: bool, win: Optional[pygame.Surface]):
     board = Board()
@@ -53,12 +53,11 @@ def play_game(move_fn_a: Callable, move_fn_b: Callable, *, swap_colors: bool, wi
         if ply < RANDOM_PLY:
             # Get all possible moves and select one randomly
             possible_moves = get_all_moves(board, turn)
-            if possible_moves:  # Make sure there are legal moves
+            if possible_moves:
                 board = random.choice(possible_moves)
             else:
                 break
         else:
-            # Use the AI move function after opening moves
             if (turn == RED) ^ swap_colors:
                 board = move_fn_a(board, turn)
             else:
@@ -75,11 +74,12 @@ def play_game(move_fn_a: Callable, move_fn_b: Callable, *, swap_colors: bool, wi
         return 0 if not swap_colors else 1
     return 0.5
 
-# Registering the bots here.
+# Registering bots
 BOTS: Dict[str, Callable] = {
-    "minimax_1": lambda b, c: minimax_move_1(b, 3, c),
-    "minimax_cur": lambda b, c: minimax_move(b, 5, c),
-    # "mcts_1k":    lambda b, c: mcts_move(b, c, simulations=1000),
+    # "minimax_1": lambda b, c: minimax_move_1(b, 3, c),
+    # "minimax_cur": lambda b, c: minimax_move(b, 2, c),
+    "minimax_cur2": lambda b, c: minimax_move(b, 8, c),
+    "mcts_1k":    lambda b, c: mcts_move(b, c, simulations=1000),
 }
 ratings: Dict[str, float] = {name: 1000.0 for name in BOTS}
 

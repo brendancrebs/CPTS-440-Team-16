@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math, random
+import math, random, time 
 from typing import List, Tuple
 
 from checkers import Board, WHITE, RED
@@ -65,22 +65,59 @@ def backpropagate(path: List[Node], value: float):
         value = 1.0 - value
 
 
-def best_move(board: Board, color, simulations: int = 800) -> Board:
+def best_move(board: Board, color, simulations: int = 800, time_limit: float = 5.0) -> Board:
+    """
+    Find the best move using MCTS with both simulation count and time limit.
+    
+    Args:
+        board: The current board state
+        color: The current player's color
+        simulations: Maximum number of simulations to run (default: 800)
+        time_limit: Maximum time in seconds to search (default: 5.0)
+    
+    Returns:
+        The selected best move (Board)
+    """
     root = Node(board, color)
     expand(root)
+    
+    # No valid moves available
+    if not root.children:
+        return board
+        
+    # Record start time for time limit enforcement
+    start_time = time.time()
+    sim_count = 0
 
-    for _ in range(simulations):
+    # Run simulations until time limit or simulation count is reached
+    while sim_count < simulations and (time.time() - start_time) < time_limit:
         node, path = root, [root]
+        
+        # Selection phase - traverse tree using UCT
         while node.children:
             node = uct_select(node)
             path.append(node)
+            
+        # Expansion phase - if node has been visited before and is non-terminal
         if node.N > 0 and not node.board.winner():
             expand(node)
             if node.children:
                 node = random.choice(node.children)
                 path.append(node)
+        
+        # Simulation phase - rollout from selected node
         value = rollout(node.board, node.color)
+        
+        # Backpropagation phase - update statistics up the tree
         backpropagate(path, value)
-
+        
+        sim_count += 1
+    
+    # Select the child with the most visits as the best move
     best_child = max(root.children, key=lambda n: n.N)
+    
+    # Optional debug info
+    elapsed = time.time() - start_time
+    print(f"MCTS completed {sim_count} simulations in {elapsed:.2f} seconds")
+    
     return best_child.board

@@ -103,13 +103,12 @@ class Board:
                 self.white_left -= 1
 
     def winner(self) -> Union[str, None]:
-        # Check if a player has no pieces left
         if self.red_left <= 0:
             return "White"
         if self.white_left <= 0:
             return "Red"
 
-        # Check if a player has no legal moves left
+        # Second win condition is to check if there are no legal moves for a player.
         if not self.has_legal_moves(RED):
             return "White"
         if not self.has_legal_moves(WHITE):
@@ -118,10 +117,9 @@ class Board:
         return None
 
     def has_legal_moves(self, color: Tuple[int, int, int]) -> bool:
-        """Check if the given color has any legal moves available."""
         pieces = self.get_all_pieces(color)
         for piece in pieces:
-            if self.get_valid_moves(piece):  # If any piece has valid moves
+            if self.get_valid_moves(piece):
                 return True
         return False
 
@@ -159,10 +157,9 @@ class Board:
                 break
             elif current.color == color:
                 break
-            else:  # opponent's piece
-                # Check if we already found an opponent's piece without an empty space
+            else:
                 if last:
-                    break  # Can't jump over two pieces consecutively
+                    break
                 last = [current]
             left -= 1
         return moves
@@ -189,10 +186,9 @@ class Board:
                 break
             elif current.color == color:
                 break
-            else:  # opponent's piece
-                # Check if we already found an opponent's piece without an empty space
+            else:
                 if last:
-                    break  # Can't jump over two pieces consecutively
+                    break
                 last = [current]
             right += 1
         return moves

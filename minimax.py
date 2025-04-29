@@ -4,6 +4,7 @@ import copy
 from typing import List, Tuple, Dict
 import math
 import time
+import zlib
 
 from checkers import Board, WHITE, RED
 
@@ -19,6 +20,9 @@ POSITION_WEIGHTS = [
     [0, 5, 0, 6, 0, 5, 0, 4],
     [7, 0, 7, 0, 7, 0, 7, 0] 
 ]
+EXACT = 0
+LOWERBOUND = 1
+UPPERBOUND = 2
 
 
 def evaluate_board(board: Board) -> float:
@@ -30,10 +34,15 @@ def evaluate_board(board: Board) -> float:
     if winner == "Red":
         return float("-inf")
     
-    # 2. Material value
+    # Give score for more material value
     white_material = board.white_left * PIECE_VALUE + board.white_kings * KING_VALUE
     red_material = board.red_left * PIECE_VALUE + board.red_kings * KING_VALUE
     material_score = white_material - red_material
+
+    white_pieces = board.get_all_pieces(WHITE)
+    red_pieces = board.get_all_pieces(RED)
+    white_kings = [p for p in white_pieces if p.king]
+    red_kings = [p for p in red_pieces if p.king]
     
     # Track and punish position repetition
     board_str = board_to_string(board)
@@ -45,13 +54,10 @@ def evaluate_board(board: Board) -> float:
     is_endgame = (board.white_left + board.red_left) <= 10
     
     if is_endgame:
-        white_pieces = board.get_all_pieces(WHITE)
-        red_pieces = board.get_all_pieces(RED)
-        
         # Center control incentive
-        white_center_distance = sum(abs(p.row-3.5) + abs(p.col-3.5) for p in white_pieces) / len(white_pieces) if white_pieces else 0
-        red_center_distance = sum(abs(p.row-3.5) + abs(p.col-3.5) for p in red_pieces) / len(red_pieces) if red_pieces else 0
-        endgame_score += 0.2 * (red_center_distance - white_center_distance)
+        white_centrality = sum(7 - (abs(k.row-3.5) + abs(k.col-3.5)) for k in white_kings) / len(white_kings) if white_kings else 0
+        red_centrality = sum(7 - (abs(k.row-3.5) + abs(k.col-3.5)) for k in red_kings) / len(red_kings) if red_kings else 0
+        endgame_score += 0.2 * (red_centrality - white_centrality)
         
         # Pursue enemy pieces when ahead in material
         if white_material > red_material:
@@ -73,13 +79,12 @@ def evaluate_board(board: Board) -> float:
             avg_distance = total_distance / (len(white_pieces) * len(red_pieces)) if red_pieces and white_pieces else 0
             endgame_score -= avg_distance * 0.5 * material_advantage
             
-            # Massive bonus for each captured piece
+            # We give a huge inceptive for capturing a piece in the late game
             endgame_score += 5.0 * material_advantage * (12 - board.red_left)
         
         elif red_material > white_material:
             material_advantage = red_material - white_material
             
-            # Same logic for red with appropriate sign changes
             total_distance = 0
             min_distance = float('inf')
             for rp in red_pieces:
@@ -94,26 +99,23 @@ def evaluate_board(board: Board) -> float:
             
             avg_distance = total_distance / (len(white_pieces) * len(red_pieces)) if red_pieces and white_pieces else 0
             endgame_score += avg_distance * 0.5 * material_advantage
-            
-            # Massive bonus for each captured white piece
+        
             endgame_score -= 5.0 * material_advantage * (12 - board.white_left)
         
         # Additional tempo consideration - punish moves that don't make progress
         remaining_pieces = board.white_left + board.red_left
         if remaining_pieces < 6:
-            # Extreme aggression multiplier for very late endgame
             aggression_multiplier = (8 - remaining_pieces) * 2.0
             endgame_score *= (1.0 + aggression_multiplier)
     
     # Special case for kings-only endgames
     if board.white_kings > 0 and board.white_left == board.white_kings and board.red_kings > 0 and board.red_left == board.red_kings:
-        # Only kings remain - strongly encourage centralization and approach
+        # Centralization of the kigs
         white_kings = [p for p in board.get_all_pieces(WHITE) if p.king]
         red_kings = [p for p in board.get_all_pieces(RED) if p.king]
         
-        # King centralization is critical in king vs king endgames
-        white_centrality = sum(7 - (abs(k.row-3.5) + abs(k.col-3.5)) for k in white_kings) / len(white_kings)
-        red_centrality = sum(7 - (abs(k.row-3.5) + abs(k.col-3.5)) for k in red_kings) / len(red_kings)
+        white_centrality = sum(7 - (abs(k.row-3.5) + abs(k.col-3.5)) for k in white_kings) / len(white_kings) if white_kings else 0
+        red_centrality = sum(7 - (abs(k.row-3.5) + abs(k.col-3.5)) for k in red_kings) / len(red_kings) if red_kings else 0
         
         # Add strong centralization bonus in king vs king endgames
         endgame_score += (white_centrality - red_centrality) * 3.0
@@ -166,23 +168,46 @@ def get_all_moves(board: Board, color) -> List[Board]:
     
     return all_moves
 
+def zobrist_hash(board: Board) -> int:
+    board_str = board_to_string(board)
+    return zlib.adler32(board_str.encode())
+
+transposition_table = {}
+
 def minimax_with_timeout(position: Board, depth: int, maximizing_color, 
                          start_time: float, time_limit: float,
                          alpha=float("-inf"), beta=float("inf")):
-    """Version of minimax that periodically checks for timeout"""
+    """Minimax search with transposition table and timeout checks"""
     # Check if we've exceeded the time limit
     if time.time() - start_time > time_limit * 0.95:  # 95% of time limit
         raise TimeoutError("Search time limit exceeded")
     
+    # Check if position is a terminal state
     winner = position.winner()
     if depth == 0 or winner:
-        # terminal score, infinite if checkmate, else heuristic
         if winner == "White":
             return float("inf"), position
         if winner == "Red":
             return float("-inf"), position
         return evaluate_board(position), position
 
+    # Generate unique hash for the board position
+    position_hash = zobrist_hash(position)
+    
+    # Check transposition table
+    if position_hash in transposition_table:
+        tt_entry = transposition_table[position_hash]
+        if tt_entry['depth'] >= depth:
+            if tt_entry['node_type'] == EXACT:
+                return tt_entry['score'], tt_entry['best_board']
+            elif tt_entry['node_type'] == LOWERBOUND and tt_entry['score'] >= beta:
+                return tt_entry['score'], tt_entry['best_board']
+            elif tt_entry['node_type'] == UPPERBOUND and tt_entry['score'] <= alpha:
+                return tt_entry['score'], tt_entry['best_board']
+    
+    # Regular alpha-beta search if not found in table or insufficient depth
+    orig_alpha = alpha  # Store original alpha for node type determination
+    
     if maximizing_color == WHITE:
         max_eval = float("-inf")
         best_board = None
@@ -193,6 +218,21 @@ def minimax_with_timeout(position: Board, depth: int, maximizing_color,
             alpha = max(alpha, max_eval)
             if beta <= alpha:
                 break
+        
+        # Determine node type and store in transposition table
+        node_type = EXACT
+        if max_eval <= orig_alpha:
+            node_type = UPPERBOUND
+        elif max_eval >= beta:
+            node_type = LOWERBOUND
+            
+        transposition_table[position_hash] = {
+            'score': max_eval,
+            'best_board': best_board,
+            'depth': depth,
+            'node_type': node_type
+        }
+        
         return max_eval, best_board
     else:
         min_eval = float("inf")
@@ -204,8 +244,24 @@ def minimax_with_timeout(position: Board, depth: int, maximizing_color,
             beta = min(beta, min_eval)
             if beta <= alpha:
                 break
+                
+        # Determine node type and store in transposition table
+        node_type = EXACT
+        if min_eval <= orig_alpha:
+            node_type = UPPERBOUND
+        elif min_eval >= beta:
+            node_type = LOWERBOUND
+            
+        transposition_table[position_hash] = {
+            'score': min_eval,
+            'best_board': best_board,
+            'depth': depth,
+            'node_type': node_type
+        }
+        
         return min_eval, best_board
     
+# increase depth in the late game to prevent draws
 def get_dynamic_depth(board: Board, base_depth: int) -> int:
     total_pieces = board.white_left + board.red_left
     
@@ -236,25 +292,15 @@ def board_to_string(board: Board) -> str:
                 result += "R" if not piece.king else "Q"
     return result
 
-def best_move(board: Board, depth: int, color, time_limit: float = 5.0) -> Board:
-    """
-    Find the best move using minimax with a time limit.
-    
-    Args:
-        board: Current board state
-        depth: Maximum depth to search
-        color: Current player's color
-        time_limit: Maximum time in seconds for the move
-    """
+def best_move(board: Board, depth: int, color, time_limit: float = 500.0) -> Board:
     global position_history
     
     start_time = time.time()
     best_board = None
     
     # Start with iterative deepening from depth 1
-    for current_depth in range(1, depth + 5):  # Allow for deeper search in endgame
-        # Check if we still have time for another iteration
-        if time.time() - start_time > time_limit * 0.8:  # Use 80% of time limit for safety
+    for current_depth in range(1, depth + 5):
+        if time.time() - start_time > time_limit * 0.8:
             break
         
         # Get dynamic depth based on pieces remaining
@@ -266,10 +312,9 @@ def best_move(board: Board, depth: int, color, time_limit: float = 5.0) -> Board
             if new_board is not None:
                 best_board = new_board
         except TimeoutError:
-            # Time limit reached during search
             break
     
-    # If no valid move was found, return original board
+    # Return the original board if no move found
     if best_board is None:
         return board
     
